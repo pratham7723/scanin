@@ -1,0 +1,7 @@
+full_name,prn,enrollment_no,batch,birthdate,address,mobile,university
+John Doe,PRN001,ENR123456,2022-26,2004-01-15,123 Main St, +91 98765 43210,University of Technology
+Jane Smith,PRN002,ENR123457,2022-26,2004-03-22,456 Oak Ave, +91 98765 43211,University of Technology
+Mike Johnson,PRN003,ENR123458,2022-26,2004-05-10,789 Pine St, +91 98765 43212,University of Technology
+Sarah Wilson,PRN004,ENR123459,2022-26,2004-07-18,321 Elm St, +91 98765 43213,University of Technology
+David Brown,PRN005,ENR123460,2022-26,2004-09-05,654 Maple Ave, +91 98765 43214,University of Technology
+
