@@ -24,15 +24,30 @@ export default function UploadPage() {
   const [showPreview, setShowPreview] = useState(false)
   const [selectedCardIndex, setSelectedCardIndex] = useState(0)
   const [selectedSide, setSelectedSide] = useState<"front" | "back">("front")
+  const [selectedTemplateId, setSelectedTemplateId] = useState("uni-standard")
   const cardRef = useRef<HTMLDivElement>(null)
 
   const { data: datasets } = useSWR("/api/datasets", fetcher)
 
+  // Use templates from the library
+  const workingTemplates = templates.reduce((acc, template) => {
+    acc[template.id] = template
+    return acc
+  }, {} as Record<string, any>)
+
   // Get the current template
-  const currentTemplate = templates.find(t => t.id === "uni-standard") || templates[0]
+  const currentTemplate = workingTemplates[selectedTemplateId as keyof typeof workingTemplates] || workingTemplates["uni-standard"]
+  
+  // Template is now working correctly
 
   // Get the current card data
-  const currentCard = generatedCards[selectedCardIndex]
+  const currentCard = generatedCards[selectedCardIndex] || {}
+  
+  // Debug logging
+  console.log("Current card data:", currentCard)
+  console.log("Generated cards:", generatedCards)
+  console.log("Photo URL in current card:", currentCard.photo_url)
+  console.log("Photo field in current card:", currentCard.photo)
 
   async function downloadCard(side: "front" | "back") {
     if (!cardRef.current) return
@@ -118,6 +133,57 @@ export default function UploadPage() {
     } catch (error) {
       console.error("PDF generation failed:", error)
       alert("Failed to generate PDF")
+    }
+  }
+
+  async function previewDataset(dataset: any) {
+    try {
+      // Map the dataset rows to the same format as generated cards
+      const students = dataset.rows.map((row: any) => ({
+        ...row,
+        // Map common field names to template fields
+        university: row.university || row.institution || "Your University",
+        full_name: row.full_name || row.name || row.student_name || row.fullName || "",
+        prn: row.prn || row.student_id || row.id || row.rollNo || row.roll_no || "",
+        enrollment_no: row.enrollment_no || row.enrollmentNo || row.enroll_no || "",
+        batch: row.batch || row.year || row.class || "",
+        birthdate: row.birthdate || row.dob || row.date_of_birth || "",
+        address: row.address || row.location || "",
+        mobile: row.mobile || row.phone || row.contact || "",
+        photo: row.photo_url || row.photo || row.photo_file || "",
+        photo_url: row.photo_url || row.photo || row.photo_file || "",
+        qr: row.prn || row.student_id || row.id || row.rollNo || row.roll_no || ""
+      }))
+
+      setGeneratedCards(students)
+      setShowPreview(true)
+      setSelectedCardIndex(0)
+      setSelectedSide("front")
+    } catch (error) {
+      console.error("Failed to preview dataset:", error)
+      alert("Failed to preview dataset")
+    }
+  }
+
+  async function deleteDataset(datasetId: string) {
+    if (!confirm("Are you sure you want to delete this dataset? This action cannot be undone.")) {
+      return
+    }
+
+    try {
+      const res = await fetch(`/api/datasets?id=${datasetId}`, {
+        method: "DELETE"
+      })
+
+      if (!res.ok) {
+        throw new Error("Failed to delete dataset")
+      }
+
+      await mutate("/api/datasets")
+      alert("Dataset deleted successfully")
+    } catch (error) {
+      console.error("Failed to delete dataset:", error)
+      alert("Failed to delete dataset")
     }
   }
 
@@ -237,6 +303,7 @@ export default function UploadPage() {
     setShowPreview(false)
     setSelectedCardIndex(0)
     setSelectedSide("front")
+    setSelectedTemplateId("uni-standard")
   }
 
   async function generateIdCards() {
@@ -247,12 +314,22 @@ export default function UploadPage() {
 
     setIsGenerating(true)
     try {
-      // Use the first available template (you can make this selectable later)
-      const templateId = "uni-standard" // Using the first template from idcard-templates.ts
+      // Use the selected template
+      const templateId = selectedTemplateId
       const students = rows.map(row => ({
         ...row,
-        // Ensure photo_url is properly mapped
-        photo: row.photo_url || row.photo || row.photo_file || ""
+        // Map common field names to template fields
+        university: row.university || row.institution || "Your University",
+        full_name: row.full_name || row.name || row.student_name || row.fullName || "",
+        prn: row.prn || row.student_id || row.id || row.rollNo || row.roll_no || "",
+        enrollment_no: row.enrollment_no || row.enrollmentNo || row.enroll_no || "",
+        batch: row.batch || row.year || row.class || "",
+        birthdate: row.birthdate || row.dob || row.date_of_birth || "",
+        address: row.address || row.location || "",
+        mobile: row.mobile || row.phone || row.contact || "",
+        photo: row.photo_url || row.photo || row.photo_file || "",
+        photo_url: row.photo_url || row.photo || row.photo_file || "",
+        qr: row.prn || row.student_id || row.id || row.rollNo || row.roll_no || ""
       }))
 
       const res = await fetch("/api/generate-idcards", {
@@ -331,8 +408,24 @@ export default function UploadPage() {
               </p>
             </label>
 
+            <label className="mt-4 block text-sm text-gray-700">
+              Template
+                                <select
+                    value={selectedTemplateId}
+                    onChange={(e) => setSelectedTemplateId(e.target.value)}
+                    className="mt-1 w-full rounded border px-2 py-1"
+                  >
+                    {Object.values(workingTemplates).map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+            </label>
+
             {rows.length > 0 && (
               <div className="mt-4 space-y-2">
+                
                 <button
                   onClick={saveDataset}
                   className="w-full rounded bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
@@ -428,13 +521,30 @@ export default function UploadPage() {
           ) : datasets.length === 0 ? (
             <p className="mt-2 text-sm text-gray-600">No datasets yet.</p>
           ) : (
-            <ul className="mt-2 space-y-1 text-sm text-gray-700">
+            <div className="mt-2 space-y-2">
               {datasets.map((d: any) => (
-                <li key={d.id}>
-                  {d.name} — {d.rows} rows
-                </li>
+                <div key={d.id} className="flex items-center justify-between p-3 border rounded-lg bg-gray-50">
+                  <div>
+                    <p className="font-medium text-gray-900">{d.name}</p>
+                    <p className="text-sm text-gray-600">{d.rows?.length || 0} rows</p>
+                  </div>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => previewDataset(d)}
+                      className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+                    >
+                      Preview
+                    </button>
+                    <button
+                      onClick={() => deleteDataset(d.id)}
+                      className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
       </div>
 
@@ -455,6 +565,23 @@ export default function UploadPage() {
             <div className="p-4 grid grid-cols-1 lg:grid-cols-3 gap-4">
               {/* Card Selection */}
               <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Template
+                  </label>
+                  <select
+                    value={selectedTemplateId}
+                    onChange={(e) => setSelectedTemplateId(e.target.value)}
+                    className="w-full border rounded px-3 py-2"
+                  >
+                    {Object.values(workingTemplates).map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Select Card ({selectedCardIndex + 1} of {generatedCards.length})
@@ -515,7 +642,7 @@ export default function UploadPage() {
               </div>
 
               {/* Card Preview */}
-              <div className="lg:col-span-2 flex items-center justify-center">
+              <div className="lg:col-span-2 flex flex-col items-center justify-center space-y-4">
                 <div className="border rounded-lg p-4 bg-gray-50">
                   <div
                     ref={cardRef}
@@ -524,7 +651,9 @@ export default function UploadPage() {
                       width: 350,
                       height: 220,
                       background: "#ffffff",
-                      color: "#000000"
+                      color: "#000000",
+                      border: "1px solid #e5e7eb",
+                      borderRadius: "4px"
                     }}
                   >
                     <IDCardPreview 
@@ -534,88 +663,169 @@ export default function UploadPage() {
                     />
                   </div>
                 </div>
+                
+                {/* Debug Info */}
+                <div className="w-full max-w-md text-xs bg-gray-100 p-2 rounded">
+                  <div className="font-bold mb-1">Debug Info:</div>
+                  <div>Template: {currentTemplate?.id}</div>
+                  <div>Template Name: {currentTemplate?.name}</div>
+                  <div>Side: {selectedSide}</div>
+                  <div>Card Index: {selectedCardIndex}</div>
+                  <div>Data Keys: {currentCard ? Object.keys(currentCard).join(", ") : "No data"}</div>
+                  <div>Photo URL: {currentCard?.photo || "No photo"}</div>
+                  <div>Template Elements: {currentTemplate?.sides?.[selectedSide]?.length || 0}</div>
+                  <div>Available Sides: {currentTemplate?.sides ? Object.keys(currentTemplate.sides).join(", ") : "None"}</div>
+                  <div>Template Structure: {currentTemplate ? "Loaded" : "Not loaded"}</div>
+                  <div>Front Elements: {currentTemplate?.sides?.front?.length || 0}</div>
+                  <div>Back Elements: {currentTemplate?.sides?.back?.length || 0}</div>
+                </div>
               </div>
             </div>
           </div>
         </div>
       )}
+
     </div>
   )
 }
 
-// ID Card Preview Component
+// ID Card Preview Component - PIXEL-PERFECT RENDERING
 function IDCardPreview({ template, side, data }: { 
   template: any, 
   side: "front" | "back", 
   data: any 
 }) {
-  if (!template || !data) return null
+  if (!template || !data) {
+    return <div style={{ padding: "20px", color: "#666", textAlign: "center" }}>No template or data available</div>
+  }
+
+  const sideElements = template.sides?.[side]
+  if (!sideElements || sideElements.length === 0) {
+    return <div style={{ padding: "20px", color: "#666", textAlign: "center" }}>No elements defined for {side} side</div>
+  }
 
   return (
-    <>
-      {template.sides[side]?.map((item: any, idx: number) => {
+    <div style={{ width: "100%", height: "100%", position: "relative" }}>
+      {sideElements.map((item: any, idx: number) => {
+        // Render text elements - EXACT POSITIONING
         if (item.type === "text") {
           const text = item.field ? (data[item.field] ?? item.placeholder ?? "") : (item.placeholder ?? "")
           const size = item.textStyle?.size ?? 12
           const weight = item.textStyle?.weight ?? 400
-          return (
-            <span
-              key={idx}
-              style={{
-                position: "absolute",
-                left: item.x,
-                top: item.y,
-                fontSize: size,
-                fontWeight: weight,
-                color: template.colors.neutral
-              }}
-            >
-              {text}
-            </span>
-          )
-        }
-        if (item.type === "image" && item.field === "photo") {
-          const src = data.photo || data.photo_url || "/placeholder.svg"
-          return (
-            <img
-              key={idx}
-              src={src}
-              alt="Student photo"
-              style={{
-                position: "absolute",
-                left: item.x,
-                top: item.y,
-                width: item.w,
-                height: item.h,
-                objectFit: "cover",
-                borderRadius: "4px"
-              }}
-            />
-          )
-        }
-        if (item.type === "qr") {
-          const qrValue = data[item.field] || data.qr || data.prn || data.id || "QR_CODE"
+          const color = item.textStyle?.color || template.colors?.neutral || "#000"
+          
           return (
             <div
               key={idx}
               style={{
                 position: "absolute",
-                left: item.x,
-                top: item.y,
-                width: item.w,
-                height: item.h
+                left: `${item.x}px`,
+                top: `${item.y}px`,
+                fontSize: `${size}px`,
+                fontWeight: weight,
+                color: color,
+                fontFamily: "Arial, sans-serif",
+                lineHeight: 1.1,
+                maxWidth: `${item.w || 200}px`,
+                wordWrap: "break-word",
+                overflow: "hidden",
+                textAlign: "left",
+                zIndex: 10
               }}
             >
-              <QRCode
-                value={qrValue}
-                size={Math.min(item.w, item.h)}
-                style={{ width: "100%", height: "100%" }}
-              />
+              {text}
             </div>
           )
         }
+        
+        // Render photo images - EXACT POSITIONING
+        if (item.type === "image" && item.field === "photo") {
+          const src = data.photo_url || data.photo || data.photo_file || ""
+          
+          // Debug logging
+          console.log("Photo rendering:", { src, data, item })
+          
+          return (
+            <div
+              key={idx}
+              style={{
+                position: "absolute",
+                left: `${item.x}px`,
+                top: `${item.y}px`,
+                width: `${item.w}px`,
+                height: `${item.h}px`,
+                overflow: "hidden",
+                borderRadius: "2px",
+                zIndex: 5,
+                backgroundColor: "#e5e7eb",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center"
+              }}
+            >
+              {src ? (
+                <img
+                  src={src}
+                  alt="Student photo"
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain"
+                  }}
+                  crossOrigin="anonymous"
+                  onLoad={() => console.log("Image loaded successfully:", src)}
+                  onError={(e) => {
+                    console.log("Image failed to load:", src, e)
+                    const target = e.target as HTMLImageElement
+                    target.style.display = "none"
+                    // Show fallback
+                    const parent = target.parentElement
+                    if (parent) {
+                      parent.innerHTML = '<div style="color: #666; font-size: 10px; font-weight: 500;">No Photo</div>'
+                    }
+                  }}
+                />
+              ) : (
+                <div style={{ color: "#666", fontSize: "10px", fontWeight: "500" }}>
+                  No Photo
+                </div>
+              )}
+            </div>
+          )
+        }
+        
+        // Render QR codes - EXACT POSITIONING
+        if (item.type === "qr") {
+          const qrValue = data[item.field] || data.qr || data.prn || data.id || "QR_CODE"
+          
+          return (
+            <div
+              key={idx}
+              style={{
+                position: "absolute",
+                left: `${item.x}px`,
+                top: `${item.y}px`,
+                width: `${item.w}px`,
+                height: `${item.h}px`,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: "#fff",
+                zIndex: 5
+              }}
+            >
+              <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <QRCode
+                  value={qrValue}
+                  size={Math.min(item.w - 4, item.h - 4)}
+                />
+              </div>
+            </div>
+          )
+        }
+        
         return null
       })}
-    </>
+    </div>
   )
 }
