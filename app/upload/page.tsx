@@ -4,7 +4,7 @@ import { useState, useRef } from "react"
 import Papa from "papaparse"
 import useSWR, { mutate } from "swr"
 import type { Dataset } from "@/lib/types"
-import { templates } from "@/lib/idcard-templates"
+import { getDefaultTemplates } from "@/lib/template-utils"
 import QRCode from "react-qr-code"
 import html2canvas from "html2canvas"
 import { jsPDF } from "jspdf"
@@ -29,8 +29,8 @@ export default function UploadPage() {
 
   const { data: datasets } = useSWR("/api/datasets", fetcher)
 
-  // Use templates from the library
-  const workingTemplates = templates.reduce((acc, template) => {
+  // Use templates from template-utils.ts
+  const workingTemplates = getDefaultTemplates().reduce((acc, template) => {
     acc[template.id] = template
     return acc
   }, {} as Record<string, any>)
@@ -136,6 +136,127 @@ export default function UploadPage() {
     }
   }
 
+  // Function to generate blob storage URL from filename
+  const generatePhotoUrl = (filename: string): string => {
+    if (!filename) return ""
+    if (filename.startsWith('http') || filename.startsWith('blob:') || filename.startsWith('data:')) {
+      return filename
+    }
+    const blobBaseUrl = process.env.NEXT_PUBLIC_BLOB_STORE_URL || 'https://blob.vercel-storage.com'
+    return `${blobBaseUrl}/student-photos/${filename}`
+  }
+
+  // Function to download CSV template
+  const downloadCSVTemplate = () => {
+    const csvHeaders = [
+      'university',
+      'full_name', 
+      'prn',
+      'enrollment_no',
+      'batch',
+      'department',
+      'birthdate',
+      'address',
+      'mobile',
+      'photo_url'
+    ]
+    
+    const sampleData = [
+      'Your University',
+      'John Doe',
+      'STU-2024-001',
+      'ENR-123456',
+      '2022-26',
+      'Computer Science',
+      '2004-01-01',
+      '123 Main St, City, State',
+      '+91 90000 00000',
+      'john_doe.jpg'
+    ]
+    
+    const csvContent = [
+      csvHeaders.join(','),
+      sampleData.join(','),
+      // Add empty rows for user to fill
+      csvHeaders.map(() => '').join(','),
+      csvHeaders.map(() => '').join(','),
+      csvHeaders.map(() => '').join(',')
+    ].join('\n')
+    
+    const blob = new Blob([csvContent], { type: 'text/csv' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'student_data_template.csv'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    window.URL.revokeObjectURL(url)
+  }
+
+  // Function to manually map photos to students
+  const mapPhotosToStudents = () => {
+    if (!photos.length || !rows.length) return
+    
+    console.log("Manually mapping photos to students...")
+    console.log("Available photos:", photos)
+    console.log("Current rows:", rows)
+    
+    let hits = 0
+    const usedPhotos = new Set<string>()
+    const next = rows.map((r) => {
+      // First, try to match by explicit photo file column
+      const photoFileCol = r.photo_file || r.photo || r["photo file"] || r.photo_url || r.image
+      console.log(`Trying to match photo for row:`, { photoFileCol, availablePhotos: photos.map(p => p.file) })
+      let match: { file: string; url: string } | undefined
+      if (photoFileCol) {
+        match = photos.find((it) => it.file === photoFileCol)
+        console.log(`Exact match result:`, match)
+      }
+      
+      // If no explicit match, try to match by various ID fields
+      if (!match) {
+        const idFields = [
+          r.studentId, r.id, r.rollNo, r.roll_no, r.student_id, 
+          r.enrollment_no, r.enrollmentNo, r.prn, r.reg_no, r.regNo,
+          r.name, r.full_name, r.fullName, r.student_name
+        ].filter(Boolean)
+        
+        for (const id of idFields) {
+          if (id) {
+            // Try exact match first
+            match = photos.find((it) => {
+              const base = it.file.replace(/\.[a-zA-Z0-9]+$/, "")
+              return base.toLowerCase() === id.toString().toLowerCase()
+            })
+            
+            // If no exact match, try partial match
+            if (!match) {
+              match = photos.find((it) => {
+                const base = it.file.replace(/\.[a-zA-Z0-9]+$/, "").toLowerCase()
+                const idStr = id.toString().toLowerCase()
+                return base.includes(idStr) || idStr.includes(base)
+              })
+            }
+            
+            if (match) break
+          }
+        }
+      }
+      
+      if (match && !usedPhotos.has(match.file)) {
+        usedPhotos.add(match.file)
+        hits++
+        return { ...r, photo_url: match.url }
+      }
+      return r
+    })
+    
+    setRows(next)
+    setMapSummary(`Mapped ${hits} photos to students`)
+    console.log(`Photo mapping complete: ${hits} matches found`)
+  }
+
   async function previewDataset(dataset: any) {
     try {
       // Map the dataset rows to the same format as generated cards
@@ -147,6 +268,7 @@ export default function UploadPage() {
         prn: row.prn || row.student_id || row.id || row.rollNo || row.roll_no || "",
         enrollment_no: row.enrollment_no || row.enrollmentNo || row.enroll_no || "",
         batch: row.batch || row.year || row.class || "",
+        department: row.department || row.dept || row.department_name || "",
         birthdate: row.birthdate || row.dob || row.date_of_birth || "",
         address: row.address || row.location || "",
         mobile: row.mobile || row.phone || row.contact || "",
@@ -213,17 +335,21 @@ export default function UploadPage() {
       return
     }
     const data = (await res.json()) as { items: { file: string; url: string }[] }
+    console.log("Uploaded photos:", data.items)
     setPhotos(data.items)
     // Try auto-map into rows
     if (rows.length > 0) {
+      console.log("Current rows for mapping:", rows)
       let hits = 0
       const usedPhotos = new Set<string>()
       const next = rows.map((r) => {
         // First, try to match by explicit photo file column
         const photoFileCol = r.photo_file || r.photo || r["photo file"] || r.photo_url || r.image
+        console.log(`Trying to match photo for row:`, { photoFileCol, availablePhotos: data.items.map(p => p.file) })
         let match: { file: string; url: string } | undefined
         if (photoFileCol) {
           match = data.items.find((it) => it.file === photoFileCol)
+          console.log(`Exact match result:`, match)
         }
         
         // If no explicit match, try to match by various ID fields
@@ -324,6 +450,7 @@ export default function UploadPage() {
         prn: row.prn || row.student_id || row.id || row.rollNo || row.roll_no || "",
         enrollment_no: row.enrollment_no || row.enrollmentNo || row.enroll_no || "",
         batch: row.batch || row.year || row.class || "",
+        department: row.department || row.dept || row.department_name || "",
         birthdate: row.birthdate || row.dob || row.date_of_birth || "",
         address: row.address || row.location || "",
         mobile: row.mobile || row.phone || row.contact || "",
@@ -406,6 +533,20 @@ export default function UploadPage() {
               <p className="mt-1 text-xs text-gray-500">
                 Name photos to match student IDs (e.g., "12345.jpg" for student ID 12345) or add a photo_file column to your CSV
               </p>
+              {photos.length > 0 && rows.length > 0 && (
+                <button
+                  onClick={mapPhotosToStudents}
+                  className="mt-2 px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
+                >
+                  Map Photos to Students ({photos.length} photos, {rows.length} students)
+                </button>
+              )}
+              <button
+                onClick={downloadCSVTemplate}
+                className="mt-2 px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700"
+              >
+                Download CSV Template
+              </button>
             </label>
 
             <label className="mt-4 block text-sm text-gray-700">
@@ -648,8 +789,8 @@ export default function UploadPage() {
                     ref={cardRef}
                     className="relative mx-auto rounded border shadow-sm"
                     style={{
-                      width: 350,
-                      height: 220,
+                      width: 480,
+                      height: 300,
                       background: "#ffffff",
                       color: "#000000",
                       border: "1px solid #e5e7eb",
@@ -665,31 +806,139 @@ export default function UploadPage() {
                 </div>
                 
                 {/* Debug Info */}
-                <div className="w-full max-w-md text-xs bg-gray-100 p-2 rounded">
+                <div className="w-full max-w-md text-xs bg-gray-100 p-2 rounded max-h-64 overflow-y-auto">
                   <div className="font-bold mb-1">Debug Info:</div>
-                  <div>Template: {currentTemplate?.id}</div>
-                  <div>Template Name: {currentTemplate?.name}</div>
-                  <div>Side: {selectedSide}</div>
-                  <div>Card Index: {selectedCardIndex}</div>
-                  <div>Data Keys: {currentCard ? Object.keys(currentCard).join(", ") : "No data"}</div>
-                  <div>Photo URL: {currentCard?.photo || "No photo"}</div>
-                  <div>Template Elements: {currentTemplate?.sides?.[selectedSide]?.length || 0}</div>
-                  <div>Available Sides: {currentTemplate?.sides ? Object.keys(currentTemplate.sides).join(", ") : "None"}</div>
-                  <div>Template Structure: {currentTemplate ? "Loaded" : "Not loaded"}</div>
-                  <div>Front Elements: {currentTemplate?.sides?.front?.length || 0}</div>
-                  <div>Back Elements: {currentTemplate?.sides?.back?.length || 0}</div>
+                  <div className="space-y-1">
+                    <div>Template: {currentTemplate?.id}</div>
+                    <div>Template Name: {currentTemplate?.name}</div>
+                    <div>Side: {selectedSide}</div>
+                    <div>Card Index: {selectedCardIndex}</div>
+                    <div>Data Keys: {currentCard ? Object.keys(currentCard).join(", ") : "No data"}</div>
+                    <div>Photo URL: {currentCard?.photo || "No photo"}</div>
+                    <div>Template Elements: {currentTemplate?.sides?.[selectedSide]?.length || 0}</div>
+                    <div>Available Sides: {currentTemplate?.sides ? Object.keys(currentTemplate.sides).join(", ") : "None"}</div>
+                    <div>Template Structure: {currentTemplate ? "Loaded" : "Not loaded"}</div>
+                    <div>Front Elements: {currentTemplate?.sides?.front?.length || 0}</div>
+                    <div>Back Elements: {currentTemplate?.sides?.back?.length || 0}</div>
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         </div>
       )}
-
     </div>
   )
 }
 
 // ID Card Preview Component - PIXEL-PERFECT RENDERING
+// Photo renderer component to handle image loading with proper React state
+function PhotoRenderer({ photoUrl, shouldTryLoadPhoto, item }: { 
+  photoUrl: string, 
+  shouldTryLoadPhoto: boolean, 
+  item: any 
+}) {
+  const [imageError, setImageError] = useState(false)
+  const [imageLoaded, setImageLoaded] = useState(false)
+
+  const handleImageLoad = () => {
+    console.log("Image loaded successfully:", photoUrl)
+    setImageLoaded(true)
+    setImageError(false)
+  }
+
+  const handleImageError = () => {
+    console.log("Image failed to load:", photoUrl)
+    console.log("This is expected if the photo hasn't been uploaded to blob storage yet")
+    setImageError(true)
+    setImageLoaded(false)
+  }
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: `${item.x}px`,
+        top: `${item.y}px`,
+        width: `${item.width || item.w}px`,
+        height: `${item.height || item.h}px`,
+        overflow: "hidden",
+        borderRadius: "2px",
+        zIndex: 5,
+        backgroundColor: "#e5e7eb",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center"
+      }}
+    >
+      {shouldTryLoadPhoto && !imageError ? (
+        <>
+          <img
+            src={photoUrl}
+            alt="Student photo"
+            style={{
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+              borderRadius: "2px",
+              display: imageLoaded ? "block" : "none"
+            }}
+            crossOrigin="anonymous"
+            onLoad={handleImageLoad}
+            onError={handleImageError}
+          />
+          {!imageLoaded && (
+            <div style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              color: "#666",
+              fontSize: "10px",
+              textAlign: "center"
+            }}>
+              Loading...
+            </div>
+          )}
+        </>
+      ) : null}
+      
+      {(!shouldTryLoadPhoto || imageError) && (
+        <div style={{ 
+          color: "#666", 
+          fontSize: "10px", 
+          fontWeight: "500", 
+          textAlign: "center",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          height: "100%"
+        }}>
+          <div style={{
+            width: "40px",
+            height: "40px",
+            backgroundColor: "#e5e7eb",
+            borderRadius: "4px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            marginBottom: "4px"
+          }}>
+            📷
+          </div>
+          <div>{imageError ? "Photo Not Found" : "No Photo"}</div>
+          {photoUrl && (
+            <div style={{ fontSize: "8px", color: "#999", textAlign: "center", maxWidth: "100%", wordBreak: "break-all" }}>
+              {imageError ? "Upload photo to blob storage" : photoUrl}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function IDCardPreview({ template, side, data }: { 
   template: any, 
   side: "front" | "back", 
@@ -707,12 +956,34 @@ function IDCardPreview({ template, side, data }: {
   return (
     <div style={{ width: "100%", height: "100%", position: "relative" }}>
       {sideElements.map((item: any, idx: number) => {
+        // Render rectangles (background elements) - EXACT MATCH
+        if (item.type === "rect") {
+          return (
+            <div
+              key={idx}
+              style={{
+                position: "absolute",
+                left: `${item.x}px`,
+                top: `${item.y}px`,
+                width: `${item.width || item.w}px`,
+                height: `${item.height || item.h}px`,
+                backgroundColor: item.style?.backgroundColor || item.fill || "#ffffff",
+                border: item.stroke ? `${item.strokeWidth || 1}px solid ${item.stroke}` : "none",
+                borderRadius: item.style?.borderRadius || "2px",
+                zIndex: 1
+              }}
+            />
+          )
+        }
+        
         // Render text elements - EXACT POSITIONING
         if (item.type === "text") {
           const text = item.field ? (data[item.field] ?? item.placeholder ?? "") : (item.placeholder ?? "")
-          const size = item.textStyle?.size ?? 12
-          const weight = item.textStyle?.weight ?? 400
-          const color = item.textStyle?.color || template.colors?.neutral || "#000"
+          const size = item.style?.fontSize || item.textStyle?.size || 12
+          const weight = item.style?.fontWeight || item.textStyle?.weight || 400
+          const color = item.style?.color || item.textStyle?.color || template.colors?.neutral || "#000"
+          const textAlign = item.style?.textAlign || "left"
+          const fontFamily = item.style?.fontFamily || "Arial, sans-serif"
           
           return (
             <div
@@ -724,12 +995,12 @@ function IDCardPreview({ template, side, data }: {
                 fontSize: `${size}px`,
                 fontWeight: weight,
                 color: color,
-                fontFamily: "Arial, sans-serif",
+                fontFamily: fontFamily,
                 lineHeight: 1.1,
-                maxWidth: `${item.w || 200}px`,
+                maxWidth: `${item.width || item.w || 200}px`,
                 wordWrap: "break-word",
                 overflow: "hidden",
-                textAlign: "left",
+                textAlign: textAlign,
                 zIndex: 10
               }}
             >
@@ -740,57 +1011,29 @@ function IDCardPreview({ template, side, data }: {
         
         // Render photo images - EXACT POSITIONING
         if (item.type === "image" && item.field === "photo") {
-          const src = data.photo_url || data.photo || data.photo_file || ""
+          const photoUrl = data.photo_url || data.photo || data.photo_file || ""
           
           // Debug logging
-          console.log("Photo rendering:", { src, data, item })
+          console.log("Photo rendering:", { photoUrl, data, item })
+          
+          // Check if we have a valid blob storage URL or data URL
+          const hasValidPhoto = photoUrl && (
+            photoUrl.startsWith('http') || 
+            photoUrl.startsWith('blob:') || 
+            photoUrl.startsWith('data:')
+          )
+          
+          // For now, let's try to load any photo URL, even if it's just a filename
+          // This will show the actual image if it exists, or fallback to placeholder
+          const shouldTryLoadPhoto = photoUrl && photoUrl.trim() !== ''
           
           return (
-            <div
+            <PhotoRenderer
               key={idx}
-              style={{
-                position: "absolute",
-                left: `${item.x}px`,
-                top: `${item.y}px`,
-                width: `${item.w}px`,
-                height: `${item.h}px`,
-                overflow: "hidden",
-                borderRadius: "2px",
-                zIndex: 5,
-                backgroundColor: "#e5e7eb",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center"
-              }}
-            >
-              {src ? (
-                <img
-                  src={src}
-                  alt="Student photo"
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "contain"
-                  }}
-                  crossOrigin="anonymous"
-                  onLoad={() => console.log("Image loaded successfully:", src)}
-                  onError={(e) => {
-                    console.log("Image failed to load:", src, e)
-                    const target = e.target as HTMLImageElement
-                    target.style.display = "none"
-                    // Show fallback
-                    const parent = target.parentElement
-                    if (parent) {
-                      parent.innerHTML = '<div style="color: #666; font-size: 10px; font-weight: 500;">No Photo</div>'
-                    }
-                  }}
-                />
-              ) : (
-                <div style={{ color: "#666", fontSize: "10px", fontWeight: "500" }}>
-                  No Photo
-                </div>
-              )}
-            </div>
+              photoUrl={photoUrl}
+              shouldTryLoadPhoto={shouldTryLoadPhoto}
+              item={item}
+            />
           )
         }
         
@@ -805,8 +1048,8 @@ function IDCardPreview({ template, side, data }: {
                 position: "absolute",
                 left: `${item.x}px`,
                 top: `${item.y}px`,
-                width: `${item.w}px`,
-                height: `${item.h}px`,
+                width: `${item.width || item.w}px`,
+                height: `${item.height || item.h}px`,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -817,7 +1060,7 @@ function IDCardPreview({ template, side, data }: {
               <div style={{ width: "100%", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
                 <QRCode
                   value={qrValue}
-                  size={Math.min(item.w - 4, item.h - 4)}
+                  size={Math.min((item.width || item.w) - 4, (item.height || item.h) - 4)}
                 />
               </div>
             </div>

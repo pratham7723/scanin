@@ -2,6 +2,7 @@
 
 import useSWR from "swr"
 import Link from "next/link"
+import ProtectedRoute from "@/components/protected-route"
 
 const fetcher = (url: string) => fetch(url).then((r) => r.json())
 
@@ -9,13 +10,14 @@ export default function AdminPage() {
   const { data: events } = useSWR("/api/attendance", fetcher)
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold text-gray-900">Admin Dashboard</h1>
-        <p className="mt-2 text-gray-700 leading-relaxed">
-          Manage attendance logs. Database integration will enable advanced filters, analytics, and exports.
-        </p>
-      </div>
+    <ProtectedRoute requiredRole="admin">
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-semibold text-gray-900">Admin Dashboard</h1>
+          <p className="mt-2 text-gray-700 leading-relaxed">
+            Manage attendance logs. Database integration will enable advanced filters, analytics, and exports.
+          </p>
+        </div>
 
       <div className="rounded-lg border bg-white p-4">
           <h3 className="font-medium text-gray-900">Recent Attendance Events</h3>
@@ -69,6 +71,7 @@ export default function AdminPage() {
             </Link>
           </div>
       </div>
-    </div>
+      </div>
+    </ProtectedRoute>
   )
 }

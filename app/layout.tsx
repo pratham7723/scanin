@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { SiteNav } from "@/components/site-nav";
 import SuppressWarnings from "@/components/suppress-warnings";
+import { AuthProvider } from "@/lib/auth-context";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -30,11 +31,13 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
         suppressHydrationWarning
       >
-        <SuppressWarnings />
-        <SiteNav />
-        <main className="mx-auto max-w-5xl px-4 py-8">
-          {children}
-        </main>
+        <AuthProvider>
+          <SuppressWarnings />
+          <SiteNav />
+          <main className="mx-auto max-w-5xl px-4 py-8">
+            {children}
+          </main>
+        </AuthProvider>
       </body>
     </html>
   );

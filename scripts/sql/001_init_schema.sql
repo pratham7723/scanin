@@ -68,3 +68,19 @@ create table if not exists enrollments (
   student_id uuid not null references students(id) on delete cascade,
   unique (class_id, student_id)
 );
+
+-- User templates for ID card designs
+create table if not exists user_templates (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references profiles(id) on delete cascade,
+  name text not null,
+  description text,
+  template_data jsonb not null,
+  is_public boolean default false,
+  created_at timestamptz default now(),
+  updated_at timestamptz default now()
+);
+
+-- Index for faster queries
+create index if not exists idx_user_templates_user_id on user_templates(user_id);
+create index if not exists idx_user_templates_public on user_templates(is_public) where is_public = true;

@@ -15,17 +15,20 @@ export function getServerSupabase() {
 
   _server = createServerClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     cookies: {
-      get(name: string) {
-        return cookies().get(name)?.value
+      async get(name: string) {
+        const cookieStore = await cookies()
+        return cookieStore.get(name)?.value
       },
-      set(name: string, value: string, options: any) {
+      async set(name: string, value: string, options: any) {
         try {
-          cookies().set({ name, value, ...options })
+          const cookieStore = await cookies()
+          cookieStore.set({ name, value, ...options })
         } catch {}
       },
-      remove(name: string, options: any) {
+      async remove(name: string, options: any) {
         try {
-          cookies().set({ name, value: "", ...options, maxAge: 0 })
+          const cookieStore = await cookies()
+          cookieStore.set({ name, value: "", ...options, maxAge: 0 })
         } catch {}
       },
     },
